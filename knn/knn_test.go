@@ -15,9 +15,12 @@ func TestKnnClassifier(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		cls := NewKnnClassifier("euclidean", 2)
-		cls.Fit(trainingData)
-		predictions := cls.Predict(testingData)
-		So(predictions, ShouldNotEqual, nil)
+
+		err = cls.Fit(trainingData)
+		So(err, ShouldBeNil)
+
+		predictions, err := cls.Predict(testingData)
+		So(err, ShouldBeNil)
 
 		Convey("When predicting the label for our first vector", func() {
 			result := base.GetClass(predictions, 0)

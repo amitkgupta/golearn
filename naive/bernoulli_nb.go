@@ -2,6 +2,7 @@ package naive
 
 import (
 	"fmt"
+	"github.com/gonum/matrix/mat64"
 	"github.com/sjwhitworth/golearn/base"
 	"math"
 )
@@ -38,7 +39,7 @@ import (
 // Information Retrieval. Cambridge University Press, pp. 234-265.
 // http://nlp.stanford.edu/IR-book/html/htmledition/the-bernoulli-model-1.html
 type BernoulliNBClassifier struct {
-	base.BaseEstimator
+	Data *mat64.Dense
 	// Conditional probability for each term. This vector should be
 	// accessed in the following way: p(f|c) = condProb[c][f].
 	// Logarithm is used in order to avoid underflow.

@@ -2,6 +2,7 @@ package edf
 
 import (
 	"fmt"
+	"os"
 )
 
 // contentEntry structs are stored in contentEntry blocks
@@ -16,11 +17,18 @@ type contentEntry struct {
 }
 
 func (e *EdfFile) extend(additionalPages uint32) error {
-	fileInfo, err := e.f.Stat()
-	if err != nil {
-		panic(err)
+	var fileSize uint64
+	if e.mode == edfAnonMode {
+		fileSize = uint64(os.Getpagesize())
+	} else if e.mode == edfFileMode {
+		fileInfo, err := e.f.Stat()
+		if err != nil {
+			panic(err)
+		}
+		fileSize = uint64(fileInfo.Size())
 	}
-	newSize := uint64(fileInfo.Size())/e.pageSize + uint64(additionalPages)
+
+	newSize := fileSize/e.pageSize + uint64(additionalPages)
 	return e.truncate(int64(newSize))
 }
 
@@ -193,11 +201,12 @@ func (e *EdfFile) AllocPages(pagesRequested uint32, thread uint32) (edfRange, er
 		return ret, fmt.Errorf("Need a valid page identifier")
 	}
 
+	e.extend(pagesRequested)
+
 	// Find the next available offset
 	startBlock, err := e.getContiguousOffset(pagesRequested)
 	if startBlock == 0 && err == nil {
 		// Increase the size of the file if necessary
-		e.extend(pagesRequested)
 		return e.AllocPages(pagesRequested, thread)
 	} else if err != nil {
 		return ret, err

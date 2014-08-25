@@ -4,16 +4,18 @@
 package knn
 
 import (
+	"fmt"
 	"github.com/gonum/matrix/mat64"
 	"github.com/sjwhitworth/golearn/base"
 	"github.com/sjwhitworth/golearn/metrics/pairwise"
 	"github.com/sjwhitworth/golearn/utilities"
+	"runtime"
+	"sync"
 )
 
 // A KNNClassifier consists of a data matrix, associated labels in the same order as the matrix, and a distance function.
 // The accepted distance functions at this time are 'euclidean' and 'manhattan'.
 type KNNClassifier struct {
-	base.BaseEstimator
 	TrainingData      base.FixedDataGrid
 	DistanceFunc      string
 	NearestNeighbours int
@@ -28,12 +30,13 @@ func NewKnnClassifier(distfunc string, neighbours int) *KNNClassifier {
 }
 
 // Fit stores the training data for later
-func (KNN *KNNClassifier) Fit(trainingData base.FixedDataGrid) {
+func (KNN *KNNClassifier) Fit(trainingData base.FixedDataGrid) error {
 	KNN.TrainingData = trainingData
+	return nil
 }
 
 // Predict returns a classification for the vector, based on a vector input, using the KNN algorithm.
-func (KNN *KNNClassifier) Predict(what base.FixedDataGrid) base.FixedDataGrid {
+func (KNN *KNNClassifier) Predict(what base.FixedDataGrid) (base.FixedDataGrid, error) {
 
 	// Check what distance function we are using
 	var distanceFunc pairwise.PairwiseDistanceFunc
@@ -44,13 +47,13 @@ func (KNN *KNNClassifier) Predict(what base.FixedDataGrid) base.FixedDataGrid {
 		distanceFunc = pairwise.NewManhattan()
 	default:
 		panic("unsupported distance function")
-
 	}
+
 	// Check compatability
 	allAttrs := base.CheckCompatable(what, KNN.TrainingData)
 	if allAttrs == nil {
 		// Don't have the same Attributes
-		return nil
+		return nil, nil
 	}
 
 	// Remove the Attributes which aren't numeric
@@ -60,6 +63,7 @@ func (KNN *KNNClassifier) Predict(what base.FixedDataGrid) base.FixedDataGrid {
 			allNumericAttrs = append(allNumericAttrs, fAttr)
 		}
 	}
+	numNumericalAttributes := len(allNumericAttrs)
 
 	// Generate return vector
 	ret := base.GeneratePredictionVector(what)
@@ -68,78 +72,87 @@ func (KNN *KNNClassifier) Predict(what base.FixedDataGrid) base.FixedDataGrid {
 	whatAttrSpecs := base.ResolveAttributes(what, allNumericAttrs)
 	trainAttrSpecs := base.ResolveAttributes(KNN.TrainingData, allNumericAttrs)
 
-	// Reserve storage for most the most similar items
-	distances := make(map[int]float64)
-
-	// Reserve storage for voting map
-	maxmap := make(map[string]int)
-
 	// Reserve storage for row computations
-	trainRowBuf := make([]float64, len(allNumericAttrs))
-	predRowBuf := make([]float64, len(allNumericAttrs))
+	trainMat := [][]float64{}
+	predMat := [][]float64{}
 
 	// Iterate over all outer rows
-	what.MapOverRows(whatAttrSpecs, func(predRow [][]byte, predRowNo int) (bool, error) {
+	KNN.TrainingData.MapOverRows(trainAttrSpecs, func(trainRow [][]byte, srcRowNo int) (bool, error) {
 		// Read the float values out
+		trainMat = append(trainMat, make([]float64, numNumericalAttributes))
 		for i, _ := range allNumericAttrs {
-			predRowBuf[i] = base.UnpackBytesToFloat(predRow[i])
+			trainMat[srcRowNo][i] = base.UnpackBytesToFloat(trainRow[i])
 		}
-
-		predMat := utilities.FloatsToMatrix(predRowBuf)
-
-		// Find the closest match in the training data
-		KNN.TrainingData.MapOverRows(trainAttrSpecs, func(trainRow [][]byte, srcRowNo int) (bool, error) {
-
-			// Read the float values out
-			for i, _ := range allNumericAttrs {
-				trainRowBuf[i] = base.UnpackBytesToFloat(trainRow[i])
-			}
-
-			// Compute the distance
-			trainMat := utilities.FloatsToMatrix(trainRowBuf)
-			distances[srcRowNo] = distanceFunc.Distance(predMat, trainMat)
-			return true, nil
-		})
-
-		sorted := utilities.SortIntMap(distances)
-		values := sorted[:KNN.NearestNeighbours]
-
-		// Reset maxMap
-		for a := range maxmap {
-			maxmap[a] = 0
-		}
-
-		// Refresh maxMap
-		for _, elem := range values {
-			label := base.GetClass(KNN.TrainingData, elem)
-			if _, ok := maxmap[label]; ok {
-				maxmap[label]++
-			} else {
-				maxmap[label] = 1
-			}
-		}
-
-		// Sort the maxMap
-		var maxClass string
-		maxVal := -1
-		for a := range maxmap {
-			if maxmap[a] > maxVal {
-				maxVal = maxmap[a]
-				maxClass = a
-			}
-		}
-
-		base.SetClass(ret, predRowNo, maxClass)
 		return true, nil
-
 	})
 
-	return ret
+	what.MapOverRows(whatAttrSpecs, func(predRow [][]byte, predRowNo int) (bool, error) {
+		// Read the float values out
+		predMat = append(predMat, make([]float64, numNumericalAttributes))
+		for i, _ := range allNumericAttrs {
+			predMat[predRowNo][i] = base.UnpackBytesToFloat(predRow[i])
+		}
+
+		return true, nil
+	})
+
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	wg := sync.WaitGroup{}
+	wg.Add(len(predMat))
+	for predRowNo, _ := range predMat {
+		go func(p int) {
+			defer wg.Done()
+
+			predRow := predMat[p]
+			distances := make(map[int]float64)
+
+			// Find the closest match in the training data
+			for srcRowNo, srcRow := range trainMat {
+				v1 := mat64.NewDense(1, numNumericalAttributes, srcRow)
+				v2 := mat64.NewDense(1, numNumericalAttributes, predRow)
+				distances[srcRowNo] = distanceFunc.Distance(v1, v2)
+			}
+
+			sorted := utilities.SortIntMap(distances)
+			values := sorted[:KNN.NearestNeighbours]
+
+			maxmap := make(map[string]int)
+
+			// Refresh maxMap
+			for _, elem := range values {
+				label := base.GetClass(KNN.TrainingData, elem)
+				if _, ok := maxmap[label]; ok {
+					maxmap[label]++
+				} else {
+					maxmap[label] = 1
+				}
+			}
+
+			// Sort the maxMap
+			var maxClass string
+			maxVal := -1
+			for a := range maxmap {
+				if maxmap[a] > maxVal {
+					maxVal = maxmap[a]
+					maxClass = a
+				}
+			}
+
+			base.SetClass(ret, p, maxClass)
+		}(predRowNo)
+	}
+	wg.Wait()
+	return ret, nil
+}
+
+// String returns a human-readable representation of this k-NN Classifier.
+func (k *KNNClassifier) String() string {
+	return fmt.Sprintf("KNNClassifier(NearestNeighbours: %d, DistanceFunc:%s\n)", k.NearestNeighbours, k.DistanceFunc)
 }
 
 // A KNNRegressor consists of a data matrix, associated result variables in the same order as the matrix, and a name.
 type KNNRegressor struct {
-	base.BaseEstimator
+	Data         *mat64.Dense
 	Values       []float64
 	DistanceFunc string
 }

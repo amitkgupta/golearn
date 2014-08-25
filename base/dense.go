@@ -300,7 +300,6 @@ func (inst *DenseInstances) Extend(rows int) error {
 	pageSize := inst.storage.GetPageSize()
 
 	for _, p := range inst.ags {
-
 		// Compute ag row storage requirements
 		rowSize := p.RowSize()
 
@@ -308,7 +307,7 @@ func (inst *DenseInstances) Extend(rows int) error {
 		rowsPerPage := float64(pageSize) / float64(rowSize)
 
 		// How many pages?
-		pagesNeeded := uint32(math.Ceil(float64(rows) / rowsPerPage))
+		pagesNeeded := uint32(math.Ceil(float64(rows) / math.Floor(rowsPerPage)))
 
 		// Allocate those pages
 		r, err := inst.storage.AllocPages(pagesNeeded, p.getThreadNo())

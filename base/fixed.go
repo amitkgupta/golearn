@@ -17,10 +17,7 @@ type FixedAttributeGroup struct {
 }
 
 func (f *FixedAttributeGroup) String() string {
-	if len(f.alloc) > 1 {
-		return fmt.Sprintf("FixedAttributeGroup(%d attributes\n thread: %d\n size: %d\n)", len(f.attributes), f.threadNo, f.size)
-	}
-	return fmt.Sprintf("FixedAttributeGroup(%d attributes\n thread: %d\n size: %d\n %d \n)", len(f.attributes), f.threadNo, f.size, f.alloc[0][0:60])
+	return fmt.Sprintf("FixedAttributeGroup(%d attributes\n thread: %d\n size: %d\n)", len(f.attributes), f.threadNo, f.size)
 }
 
 // RowSize returns the size of each row in bytes
@@ -77,7 +74,7 @@ func (f *FixedAttributeGroup) resolveBlockFromByteOffset(byteOffset, rowSize int
 	blockOffset := 0
 	for {
 		if curBlock >= len(f.alloc) {
-			panic("Don't have enough blocks to fulfill")
+			panic(fmt.Sprintf("Don't have enough blocks to fulfill: curBlock %d, len(f.alloc) %d", curBlock, len(f.alloc)))
 		}
 
 		// Rows are not allowed to span blocks
